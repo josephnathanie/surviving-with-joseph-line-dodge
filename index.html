@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Joseph Survivor | Mobile Edition</title>
+
+<style>
+body {
+    margin: 0;
+    overflow: hidden;
+    background: #1a1a2e;
+    font-family: 'Segoe UI', sans-serif;
+    touch-action: none;
+}
+#game-ui {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    color: #fff;
+    font-size: 22px;
+    font-weight: bold;
+    text-shadow: 2px 2px #000;
+    pointer-events: none;
+    z-index: 5;
+}
+#game-over {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.9);
+    border: 2px solid #4ecca3;
+    padding: 30px;
+    text-align: center;
+    color: white;
+    display: none;
+    border-radius: 15px;
+    z-index: 10;
+}
+button {
+    padding: 14px 36px;
+    font-size: 20px;
+    background: #4ecca3;
+    border: none;
+    color: #1a1a2e;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+/* JOYSTICK */
+#joystick-base {
+    position: absolute;
+    bottom: 30px;
+    left: 30px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(78,204,163,0.5);
+    display: none;
+    z-index: 9;
+}
+#joystick-stick {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #4ecca3;
+    transform: translate(-50%, -50%);
+}
+</style>
+</head>
+
+<body>
+
+<div id="game-ui">SCORE: <span id="score">0</span></div>
+
+<div id="joystick-base">
+    <div id="joystick-stick"></div>
+</div>
+
+<div id="game-over">
+<h1 style="margin-top:0">GAME OVER</h1>
+<p>Joseph scored: <span id="final-score">0</span></p>
+<button onclick="location.reload()">TRY AGAIN</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+
+<script>
+// ---------- SCENE ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 5, 45);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 2.5));
+
+// ---------- PLAYER ----------
+const playerGroup = new THREE.Group();
+scene.add(playerGroup);
+
+const joseph = new THREE.Sprite(
+    new THREE.SpriteMaterial({ transparent: true })
+);
+joseph.scale.set(2.6, 3.8, 1);
+joseph.position.y = 1.9;
+playerGroup.add(joseph);
+
+// LOAD PNG (kept as-is)
+new THREE.TextureLoader().load('Screenshot (491).png', texture => {
+    joseph.material.map = texture;
+    joseph.material.alphaTest = 0.01;
+    joseph.material.needsUpdate = true;
+});
+
+// ---------- GRID ----------
+scene.add(new THREE.GridHelper(100, 50, 0x4ecca3, 0x232931));
+
+// ---------- INPUT ----------
+const keys = {};
+let joyX = 0;
+let joyY = 0;
+
+window.onkeydown = e => keys[e.key.toLowerCase()] = true;
+window.onkeyup = e => keys[e.key.toLowerCase()] = false;
+
+// Mobile detection
+const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const joyBase = document.getElementById('joystick-base');
+const joyStick = document.getElementById('joystick-stick');
+
+if (isMobile) {
+    joyBase.style.display = 'block';
+
+    let active = false;
+
+    joyBase.addEventListener('touchstart', e => {
+        active = true;
+        e.preventDefault();
+    }, { passive:false });
+
+    joyBase.addEventListener('touchmove', e => {
+        if (!active) return;
+        const rect = joyBase.getBoundingClientRect();
+        const t = e.touches[0];
+        let dx = t.clientX - (rect.left + rect.width/2);
+        let dy = t.clientY - (rect.top + rect.height/2);
+        const max = 45;
+        const dist = Math.min(max, Math.hypot(dx, dy));
+        const ang = Math.atan2(dy, dx);
+
+        joyX = Math.cos(ang) * (dist / max);
+        joyY = Math.sin(ang) * (dist / max);
+
+        joyStick.style.transform =
+            `translate(${joyX*35 - 50}%, ${joyY*35 - 50}%)`;
+        e.preventDefault();
+    }, { passive:false });
+
+    window.addEventListener('touchend', () => {
+        active = false;
+        joyX = joyY = 0;
+        joyStick.style.transform = 'translate(-50%, -50%)';
+    });
+}
+
+// ---------- GAME ----------
+let score = 0;
+let alive = true;
+const obstacles = [];
+
+function spawnObstacle() {
+    const o = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.7, 0),
+        new THREE.MeshPhongMaterial({ color: 0xff4b2b })
+    );
+    o.position.set(Math.random()*24 - 12, 0.7, -40);
+    scene.add(o);
+    obstacles.push(o);
+}
+
+function update() {
+    if (!alive) return;
+
+    const speed = 0.28;
+
+    // Keyboard
+    if (keys.w || keys.arrowup) playerGroup.position.z -= speed;
+    if (keys.s || keys.arrowdown) playerGroup.position.z += speed;
+    if (keys.a || keys.arrowleft) playerGroup.position.x -= speed;
+    if (keys.d || keys.arrowright) playerGroup.position.x += speed;
+
+    // Joystick
+    playerGroup.position.x += joyX * speed * 1.6;
+    playerGroup.position.z += joyY * speed * 1.6;
+
+    playerGroup.position.x = THREE.MathUtils.clamp(playerGroup.position.x, -15, 15);
+    playerGroup.position.z = THREE.MathUtils.clamp(playerGroup.position.z, -15, 10);
+
+    camera.position.lerp(
+        new THREE.Vector3(playerGroup.position.x, 6, playerGroup.position.z + 10),
+        0.1
+    );
+    camera.lookAt(playerGroup.position.x, 1.5, playerGroup.position.z);
+
+    if (Math.random() < 0.14) spawnObstacle();
+
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        const o = obstacles[i];
+        o.position.z += 0.75;
+        o.rotation.y += 0.06;
+
+        if (playerGroup.position.distanceTo(o.position) < 1.2) {
+            alive = false;
+            document.getElementById('game-over').style.display = 'block';
+            document.getElementById('final-score').innerText = score;
+        }
+
+        if (o.position.z > 20) {
+            scene.remove(o);
+            obstacles.splice(i, 1);
+            score += 10;
+            document.getElementById('score').innerText = score;
+        }
+    }
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    update();
+    renderer.render(scene, camera);
+}
+
+window.onresize = () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+};
+
+animate();
+</script>
+</body>
+</html>
